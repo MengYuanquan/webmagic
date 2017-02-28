@@ -1,8 +1,6 @@
 package us.codecraft.webmagic;
 
-import com.google.common.collect.Lists;
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.http.HttpHost;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import us.codecraft.webmagic.downloader.Downloader;
@@ -16,6 +14,7 @@ import us.codecraft.webmagic.scheduler.QueueScheduler;
 import us.codecraft.webmagic.scheduler.Scheduler;
 import us.codecraft.webmagic.thread.CountableThreadPool;
 import us.codecraft.webmagic.utils.UrlUtils;
+import us.codecraft.webmagic.utils.WMCollections;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -173,9 +172,9 @@ public class Spider implements Runnable, Task {
      *
      * @param scheduler scheduler
      * @return this
-     * @Deprecated
      * @see #setScheduler(us.codecraft.webmagic.scheduler.Scheduler)
      */
+    @Deprecated
     public Spider scheduler(Scheduler scheduler) {
         return setScheduler(scheduler);
     }
@@ -293,7 +292,7 @@ public class Spider implements Runnable, Task {
         }
         if (startRequests != null) {
             for (Request request : startRequests) {
-                scheduler.push(request, this);
+                addRequest(request);
             }
             startRequests.clear();
         }
@@ -306,7 +305,7 @@ public class Spider implements Runnable, Task {
         initComponent();
         logger.info("Spider " + getUUID() + " started!");
         while (!Thread.currentThread().isInterrupted() && stat.get() == STAT_RUNNING) {
-            Request request = scheduler.poll(this);
+            final Request request = scheduler.poll(this);
             if (request == null) {
                 if (threadPool.getThreadAlive() == 0 && exitWhenComplete) {
                     break;
@@ -314,16 +313,15 @@ public class Spider implements Runnable, Task {
                 // wait until new url added
                 waitNewUrl();
             } else {
-                final Request requestFinal = request;
                 threadPool.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
-                            processRequest(requestFinal);
-                            onSuccess(requestFinal);
+                            processRequest(request);
+                            onSuccess(request);
                         } catch (Exception e) {
-                            onError(requestFinal);
-                            logger.error("process request " + requestFinal + " error", e);
+                            onError(request);
+                            logger.error("process request " + request + " error", e);
                         } finally {
                             pageCount.incrementAndGet();
                             signalNewUrl();
@@ -404,7 +402,9 @@ public class Spider implements Runnable, Task {
     protected void processRequest(Request request) {
         Page page = downloader.download(request, this);
         if (page == null) {
-            throw new RuntimeException("unaccpetable response status");
+            sleep(site.getSleepTime());
+            onError(request);
+            return;
         }
         // for cycle retry
         if (page.isNeedCycleRetry()) {
@@ -499,7 +499,7 @@ public class Spider implements Runnable, Task {
     }
 
     public <T> T get(String url) {
-        List<String> urls = Lists.newArrayList(url);
+        List<String> urls = WMCollections.newArrayList(url);
         List<T> resultItemses = getAll(urls);
         if (resultItemses != null && resultItemses.size() > 0) {
             return resultItemses.get(0);
